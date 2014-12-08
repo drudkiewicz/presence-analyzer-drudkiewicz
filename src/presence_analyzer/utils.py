@@ -7,6 +7,8 @@ import csv
 from json import dumps
 from functools import wraps
 from datetime import datetime
+from threading import Lock
+from copy import deepcopy
 
 from flask import Response
 
@@ -14,6 +16,41 @@ from presence_analyzer.main import app
 
 import logging
 log = logging.getLogger(__name__)  # pylint: disable=C0103
+
+CACHE_DATA = {}
+LOCK = Lock()
+
+
+def cache(sec):
+    """
+    A decorator to cache function's result for given time in seconds.
+    """
+    def decorator(func):
+
+        def is_valid(date):
+            """
+            Checks if cache is outdated.
+            """
+            return (datetime.now() - date).total_seconds() < sec
+
+        def wrapper(*args, **kwargs):
+            with LOCK:
+                key = (
+                    func.__name__, tuple(args), tuple(sorted(kwargs.items()))
+                )
+                data = CACHE_DATA.get(key)
+
+                if data and is_valid(data.get('date')):
+                    return deepcopy(data.get('object'))
+                else:
+                    cached_object = func(*args, **kwargs)
+                    CACHE_DATA[key] = {
+                        'object': cached_object,
+                        'date': datetime.now()
+                    }
+                    return deepcopy(cached_object)
+        return wrapper
+    return decorator
 
 
 def jsonify(function):
@@ -30,6 +67,7 @@ def jsonify(function):
     return inner
 
 
+@cache(600)
 def get_menu_data():
     """
     Extracts menu data from CSV file
@@ -67,6 +105,7 @@ def get_menu(page_url):
     return pages
 
 
+@cache(600)
 def get_data():
     """
     Extracts presence data from CSV file and groups it by user_id.
